@@ -1,0 +1,104 @@
+apiVersion: kubeflow.org/v1beta1
+kind: Experiment
+metadata:
+  name: bayesian-opt-hp
+  namespace: ''
+spec:
+  maxTrialCount: 16
+  parallelTrialCount: 4
+  maxFailedTrialCount: 4
+  resumePolicy: LongRunning
+  objective:
+    type: maximize
+    goal: 0.999
+    objectiveMetricName: ndcg
+    additionalMetricNames:
+      - train_loss
+      - valid_loss
+    metricStrategies:
+      - name: ndcgb
+        value: max
+      - name: train_loss
+        value: latest
+      - name: valid_loss
+        value: latest
+  algorithm:
+    algorithmName: bayesianoptimization
+    algorithmSettings:
+      - name: base_estimator
+        value: GP
+      - name: n_initial_points
+        value: '5'
+      - name: acq_func
+        value: gp_hedge
+      - name: acq_optimizer
+        value: auto
+      - name: random_state
+        value: '42'
+  earlyStopping:
+    algorithmName: medianstop
+    algorithmSettings:
+      - name: min_trials_required
+        value: '3'
+      - name: start_step
+        value: '4'
+  parameters:
+    - name: batch_size
+      parameterType: int
+      feasibleSpace:
+        max: '2048'
+        min: '256'
+    - name: learning_rate
+      parameterType: double
+      feasibleSpace:
+        max: '0.01'
+        min: '0.0001'
+    - name: embedding_dim
+      parameterType: int
+      feasibleSpace:
+        max: '128'
+        min: '4'
+        step: '1'
+    - name: num_mlp_layers
+      parameterType: int
+      feasibleSpace:
+        max: '5'
+        min: '1'
+        step: '1'
+  metricsCollectorSpec:
+    collector:
+      kind: StdOut
+  trialTemplate:
+    primaryContainerName: training-container
+    successCondition: status.conditions.#(type=="Complete")#|#(status=="True")#
+    failureCondition: status.conditions.#(type=="Failed")#|#(status=="True")#
+    trialParameters:
+      - name: batch_size
+        reference: batch_size
+      - name: learning_rate
+        reference: learning_rate
+      - name: embedding_dim
+        reference: embedding_dim
+      - name: num_mlp_layers
+        reference: num_mlp_layers
+    trialSpec:
+      apiVersion: batch/v1
+      kind: Job
+      spec:
+        template:
+          metadata:
+            annotations:
+              sidecar.istio.io/inject: 'false'
+          spec:
+            containers:
+              - name: training-container
+                image: docker.io/alanzhu07/nas_katlib:v4
+                command:
+                  - python3
+                  - training.py
+                  - '--epochs=50'
+                  - '--batch_size=${trialParameters.batch_size}'
+                  - '--learning_rate=${trialParameters.learning_rate}'
+                  - '--embedding_dim=${trialParameters.embedding_dim}'
+                  - '--num_mlp_layers=${trialParameters.num_mlp_layers}'
+            restartPolicy: Never
